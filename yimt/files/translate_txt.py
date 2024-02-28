@@ -2,17 +2,18 @@
 import os
 import argparse
 
+from yimt.api.translator import Progress
 from yimt.api.utils import detect_lang
 
 
-def translate_txt_auto(txt_fn, source_lang="auto", target_lang="zh", translation_file=None):
+def translate_txt_auto(txt_fn, source_lang="auto", target_lang="zh", translation_file=None, callbacker=None):
     if translation_file is None:
         paths = os.path.splitext(txt_fn)
         translated_txt_fn = paths[0] + "-translated" + paths[1]
     else:
         translated_txt_fn = translation_file
 
-    txt = open(txt_fn, encoding="utf-8").read()
+    txt = open(txt_fn, encoding="utf-8").read()  # TODO: 大文本文件一次读入有问题
 
     if source_lang == "auto":
         source_lang = detect_lang(txt)
@@ -20,7 +21,10 @@ def translate_txt_auto(txt_fn, source_lang="auto", target_lang="zh", translation
     from yimt.api.translators import Translators
     translator = Translators().get_translator(source_lang, target_lang)
 
-    translation = translator.translate_paragraph(txt)
+    if callbacker:
+        callbacker.set_tag(txt_fn)
+
+    translation = translator.translate_paragraph(txt, callbacker)
 
     out_f = open(translated_txt_fn, "w", encoding="utf-8")
     out_f.write(translation)
@@ -40,7 +44,9 @@ if __name__ == "__main__":
     out_file = args.output_file
     to_lang = args.to_lang
 
-    translated_txt_fn = translate_txt_auto(in_file, target_lang=to_lang, translation_file=out_file)
+    callback = Progress()
+
+    translated_txt_fn = translate_txt_auto(in_file, target_lang=to_lang, translation_file=out_file, callbacker=callback)
 
     import webbrowser
     webbrowser.open(in_file)

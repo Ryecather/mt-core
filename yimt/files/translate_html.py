@@ -2,11 +2,11 @@ import argparse
 import os
 
 import jieba
-from bs4 import BeautifulSoup, Comment
+from bs4 import BeautifulSoup, Comment, Doctype
 from yimt.api.utils import detect_lang
 
-html_progress = ""
-def too_shor(txt, lang):
+
+def too_short(txt, lang):
     if len(txt.strip()) == 0:
         return True
 
@@ -19,7 +19,65 @@ def too_shor(txt, lang):
     return False
 
 
-def translate_ml_auto(in_fn, source_lang="auto", target_lang="zh", translation_file=None):
+def collect(markup_str, no_translatable_tags=['style', 'script', 'head', 'meta', 'link']):
+    """收集标记中所有可以翻译的元素和文本"""
+    markup = BeautifulSoup(markup_str, "html.parser")
+    to_translated_elements = []
+    to_translated_txt = []
+    for element in markup.findAll(text=True):
+        if not element.parent.name in no_translatable_tags:
+            if type(element.string) == Comment:
+                continue
+
+            if type(element.string) == Doctype:
+                continue
+
+            t = element.string
+            if len(t.strip()) == 0:
+                continue
+
+            to_translated_elements.append(element)
+            to_translated_txt.append(element.string)
+
+    return markup, to_translated_elements, to_translated_txt
+
+
+def translate_tag_list(markup_strs, source_lang="auto", target_lang="zh", callbacker=None):
+    markups = []
+    to_translated_tags = []
+    to_translated_strs = []
+    to_translated_list = []
+    for s in markup_strs:
+        m, es, ts = collect(s)
+        markups.append(m)
+        to_translated_tags.append(es)
+        to_translated_strs.append(ts)
+        for s in ts:
+            to_translated_list.append(s)
+
+    if source_lang == "auto":
+        source_lang = detect_lang(to_translated_list[0])
+
+    from yimt.api.translators import Translators
+    translator = Translators().get_translator(source_lang, target_lang)
+
+    translations = translator.translate_list(to_translated_list, callbacker=callbacker)
+
+    idx  = 0
+    for i in range(len(markups)):
+        replace(to_translated_tags[i], translations[idx:idx+len(to_translated_tags[i])])
+        idx += len(to_translated_tags[i])
+
+    return [m.prettify() for m in markups]
+
+
+def replace(to_translated_elements, translations):
+    """用翻译文本替换元素中原始文本"""
+    for e, t in zip(to_translated_elements, translations):
+        e.replaceWith(t)
+
+
+def translate_ml_auto(in_fn, source_lang="auto", target_lang="zh", translation_file=None, callbacker=None):
     if translation_file is None:
         paths = os.path.splitext(in_fn)
         translated_fn = paths[0] + "-translated" + paths[1]
@@ -27,10 +85,10 @@ def translate_ml_auto(in_fn, source_lang="auto", target_lang="zh", translation_f
         translated_fn = translation_file
 
     in_fn = in_fn.lower()
-    html_txt = open(in_file, encoding="utf-8").read()
+    html_txt = open(in_fn, encoding="utf-8").read()
     if in_fn.endswith(".html") or in_fn.endswith(".xhtml") or in_fn.endswith(".htm"):
         soup = BeautifulSoup(html_txt, "html.parser")
-    elif in_file.endswith(".xml") or in_fn.endswith(".sgml"):
+    elif in_fn.endswith(".xml") or in_fn.endswith(".sgml"):
         soup = BeautifulSoup(html_txt, "xml")
 
     body = soup
@@ -42,9 +100,12 @@ def translate_ml_auto(in_fn, source_lang="auto", target_lang="zh", translation_f
             if type(element.string) == Comment:
                 continue
 
+            if type(element.string) == Doctype:
+                continue
+
             t = element.string
-            # if too_shor(t, translator.from_lang):
-            #     continue
+            if len(t.strip()) == 0:
+                continue
 
             to_translated_elements.append(element)
             to_translated_txt.append(element.string)
@@ -54,18 +115,11 @@ def translate_ml_auto(in_fn, source_lang="auto", target_lang="zh", translation_f
 
     from yimt.api.translators import Translators
     translator = Translators().get_translator(source_lang, target_lang)
-    global html_progress
-    html_progress = ""
-    translations = []
-    batch_size = 100
-    for i in range(0, len(to_translated_txt) // batch_size + 1):
-        batch = to_translated_txt[i * batch_size: i * batch_size + batch_size]
-        # print(batch) # 测试用
-        translation = translator.translate_list(batch)
-        translations += translation
-        html_progress += "#"
-        print("html_progress:" + html_progress)  # 测试用
-    # translations = translator.translate_list(to_translated_txt)
+
+    if callbacker:
+        callbacker.set_tag(in_fn)
+
+    translations = translator.translate_list(to_translated_txt, callbacker=callbacker)
 
     for e, t in zip(to_translated_elements, translations):
         e.replaceWith(t)
@@ -73,7 +127,7 @@ def translate_ml_auto(in_fn, source_lang="auto", target_lang="zh", translation_f
     out_f = open(translated_fn, "w", encoding="utf-8")
     out_f.write(soup.prettify())
     out_f.close()
-    html_progress = ""
+
     return translated_fn
 
 
